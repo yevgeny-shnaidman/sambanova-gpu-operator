@@ -1,0 +1,31 @@
+apiVersion: kmm.sigs.x-k8s.io/v1beta1
+kind: Module
+metadata:
+  name: moduleName
+  namespace: moduleNamespace
+spec:
+  moduleLoader:
+    container:
+      imagePullPolicy: Always
+      modprobe:
+        moduleName: testgpu
+        firmwarePath: testFirmwareDir/updates
+      kernelMappings:
+        - regexp: "^.+$"
+          containerImage: driversImage
+          inTreeModulesToRemove:
+          - testgpu
+          build:
+            buildArgs:
+              - name: DRIVERS_VERSION
+                value: driversVersion
+            dockerfileConfigMap:
+              name: dockerfile
+    serviceAccountName: "sambanova-gpu-operator-kmm-module-loader"
+  selector:
+    feature.node.kubernetes.io/pci-2040.present: "true"
+  tolerations:
+    - key: "some key"
+      operator: Equal
+      value: true
+      effect: NoExecute

@@ -42,8 +42,8 @@ func ParseFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("could not open the configuration file: %v", err)
 	}
 	defer func() {
-                _ = fd.Close() // Ignore close error in defer
-        }()
+		_ = fd.Close() // Ignore close error in defer
+	}()
 
 	cfg := Config{}
 

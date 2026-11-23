@@ -20,9 +20,9 @@ import (
 	"context"
 	"fmt"
 
+	kmmlabels "github.com/rh-ecosystem-edge/kernel-module-management/pkg/labels"
 	sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/constants"
-	kmmlabels "github.com/rh-ecosystem-edge/kernel-module-management/pkg/labels"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"

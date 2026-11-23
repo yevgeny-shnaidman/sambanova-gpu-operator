@@ -82,7 +82,7 @@ func (km *kmmModule) SetKMMModuleAsDesired(mod *kmmv1beta1.Module, devConfig *sa
 }
 
 func setKMMModuleLoader(mod *kmmv1beta1.Module, devConfig *sambanovav1alpha1.DeviceConfig) error {
-        driversImage := devConfig.Spec.DriversImage + "-$KERNEL_VERSION"
+	driversImage := devConfig.Spec.DriversImage + "-$KERNEL_VERSION"
 
 	mod.Spec.ModuleLoader = &kmmv1beta1.ModuleLoaderSpec{
 		Container: kmmv1beta1.ModuleLoaderContainerSpec{
@@ -92,10 +92,10 @@ func setKMMModuleLoader(mod *kmmv1beta1.Module, devConfig *sambanovav1alpha1.Dev
 			},
 			KernelMappings: []kmmv1beta1.KernelMapping{
 				{
-					Regexp:               "^.+$",
-					ContainerImage:       driversImage,
-					InTreeModulesToRemove: []string{gpuDriverModuleName,},
-                                        
+					Regexp:                "^.+$",
+					ContainerImage:        driversImage,
+					InTreeModulesToRemove: []string{gpuDriverModuleName},
+
 					Build: &kmmv1beta1.Build{
 						DockerfileConfigMap: &v1.LocalObjectReference{
 							Name: getDockerfileCMName(devConfig),
@@ -110,20 +110,20 @@ func setKMMModuleLoader(mod *kmmv1beta1.Module, devConfig *sambanovav1alpha1.Dev
 				},
 			},
 			ImagePullPolicy: v1.PullAlways,
-                        Version:         devConfig.Spec.DriverVersion,
+			Version:         devConfig.Spec.DriverVersion,
 		},
 	}
 	mod.Spec.ModuleLoader.ServiceAccountName = "sambanova-gpu-operator-kmm-module-loader"
 	mod.Spec.ImageRepoSecret = devConfig.Spec.ImageRepoSecret
 	mod.Spec.Selector = getNodeSelector(devConfig)
 	mod.Spec.Tolerations = []v1.Toleration{
-                {
-                        Key:      constants.UpgradeTaintTolerationKey,
-                        Value:    "true",
-                        Operator: v1.TolerationOpEqual,
-                        Effect:   v1.TaintEffectNoExecute,
-                },
-        }
+		{
+			Key:      constants.UpgradeTaintTolerationKey,
+			Value:    "true",
+			Operator: v1.TolerationOpEqual,
+			Effect:   v1.TaintEffectNoExecute,
+		},
+	}
 	return nil
 }
 

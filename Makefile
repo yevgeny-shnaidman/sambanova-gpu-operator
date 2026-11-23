@@ -95,7 +95,7 @@ manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition o
 .PHONY: generate
 generate: controller-gen mockgen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-	go generate ./...
+	PATH="$(PROJECT_DIR)/bin:$(PATH)" go generate ./...
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -165,7 +165,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.1)
+	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.0)
 
 GOLANGCI_LINT = $(shell pwd)/bin/golangci-lint
 .PHONY: golangci-lint
@@ -174,7 +174,7 @@ golangci-lint: ## Download golangci-lint locally if necessary.
 
 .PHONY: mockgen
 mockgen: ## Install mockgen locally.
-	go install go.uber.org/mock/mockgen@v0.3.0
+	GOBIN=$(PROJECT_DIR)/bin go install go.uber.org/mock/mockgen@v0.6.0
 
 KUSTOMIZE = $(shell pwd)/bin/kustomize
 .PHONY: kustomize

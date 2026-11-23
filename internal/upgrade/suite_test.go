@@ -19,9 +19,9 @@ package upgrade
 import (
 	"testing"
 
-	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/test"
 	"k8s.io/apimachinery/pkg/runtime"
 	//+kubebuilder:scaffold:imports
 )

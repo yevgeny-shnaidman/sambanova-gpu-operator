@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	kmmv1beta1 "github.com/rh-ecosystem-edge/kernel-module-management/api/v1beta1"
-        sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
+	sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/constants"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,8 +44,8 @@ var _ = Describe("setKMMModuleLoader", func() {
 		}
 		input := sambanovav1alpha1.DeviceConfig{
 			Spec: sambanovav1alpha1.DeviceConfigSpec{
-                                DriversImage: "some image:tag",
-                        },
+				DriversImage: "some image:tag",
+			},
 		}
 
 		expectedYAMLFile, err := os.ReadFile("testdata/module_loader_test.yaml")
@@ -60,8 +60,7 @@ var _ = Describe("setKMMModuleLoader", func() {
 		Expect(len(expectedMod.Spec.ModuleLoader.Container.KernelMappings)).To(Equal(1))
 
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].ContainerImage = "some image:tag-$KERNEL_VERSION"
-		
-                 
+
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].Build.DockerfileConfigMap.Name = "dockerfile-" + input.Name
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].Build.BuildArgs[0].Value = input.Spec.DriverVersion
 		expectedMod.Spec.Selector = map[string]string{"feature.node.kubernetes.io/pci-2040.present": "true"}
@@ -88,7 +87,7 @@ var _ = Describe("setKMMModuleLoader", func() {
 			Spec: sambanovav1alpha1.DeviceConfigSpec{
 				UseInTreeDrivers: false,
 				DriversImage:     "some driver image",
-				DriverVersion:   "some driver version",
+				DriverVersion:    "some driver version",
 				Selector:         map[string]string{"some label": "some label value"},
 				ImageRepoSecret:  &v1.LocalObjectReference{Name: "image repo secret name"},
 			},
@@ -107,13 +106,13 @@ var _ = Describe("setKMMModuleLoader", func() {
 
 		expectedMod.Spec.ModuleLoader.Container.Version = input.Spec.DriverVersion
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].ContainerImage = input.Spec.DriversImage + "-$KERNEL_VERSION"
-                
+
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].Build.DockerfileConfigMap.Name = "dockerfile-" + input.Name
 		expectedMod.Spec.ModuleLoader.Container.KernelMappings[0].Build.BuildArgs[0].Value = "some driver version"
-                
+
 		expectedMod.Spec.Selector = map[string]string{"some label": "some label value"}
 		expectedMod.Spec.ImageRepoSecret = &v1.LocalObjectReference{Name: "image repo secret name"}
-                expectedMod.Spec.Tolerations[0].Key = constants.UpgradeTaintTolerationKey
+		expectedMod.Spec.Tolerations[0].Key = constants.UpgradeTaintTolerationKey
 
 		err = setKMMModuleLoader(&mod, &input)
 

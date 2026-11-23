@@ -42,6 +42,10 @@ type DeviceConfigSpec struct {
 	// +optional
 	DevicePluginImage string `json:"devicePluginImage,omitempty"`
 
+	// SNDImage is the image whose default entrypoint starts the SND application.
+	// +optional
+	SNDImage string `json:"sndImage,omitempty"`
+
 	// pull secrets used for pull/setting images used by operator
 	// +optional
 	ImageRepoSecret *v1.LocalObjectReference `json:"imageRepoSecret,omitempty"`

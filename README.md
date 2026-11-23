@@ -66,6 +66,29 @@ make uninstall
 make undeploy
 ```
 
+## SND application
+
+For each DeviceConfig, the operator reconciles an owned `snd-<deviceconfig-name>`
+DaemonSet in the same namespace. SND runs only on nodes carrying the corresponding
+KMM Module's `kmm.node.kubernetes.io/<namespace>.<deviceconfig-name>.ready` label.
+KMM adds this label once the kernel module is ready and removes it when it is no
+longer ready.
+
+The default SND image is `quay.io/yshnaidm/sm-snd`; override it with `spec.sndImage`.
+The image's default entrypoint must start SND. `spec.imageRepoSecret`, when set,
+is also used to pull the SND image.
+
+SND runs privileged and mounts the node's existing `/var/sm` directory at
+`/opt/sambaflow/runtime/kshim_intfc/lib`, which is also its `LD_LIBRARY_PATH`.
+The namespace and service account must permit privileged pods, host networking,
+and hostPath volumes (for example through an appropriate SCC on OpenShift).
+
+SND uses host networking because it serves SNML gRPC on `127.0.0.1:50053`.
+Client pods must run on the same node with `hostNetwork: true` and should set
+`dnsPolicy: ClusterFirstWithHostNet`. They can then call `127.0.0.1:50053` directly.
+Use non-overlapping DeviceConfig node selections so only one SND instance binds
+that address on each node.
+
 ## Project Distribution
 
 Following the options to release and provide this solution to the users.

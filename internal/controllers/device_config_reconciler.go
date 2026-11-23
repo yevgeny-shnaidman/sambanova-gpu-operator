@@ -22,11 +22,11 @@ import (
 
 	kmmv1beta1 "github.com/rh-ecosystem-edge/kernel-module-management/api/v1beta1"
 	sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemoset"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/filter"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/kmmmodule"
-	
-	
-        "github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/upgrade"
+
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/upgrade"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -56,10 +56,11 @@ type DeviceConfigReconciler struct {
 func NewDeviceConfigReconciler(
 	client client.Client,
 	kmmHandler kmmmodule.KMMModuleAPI,
+	daemonSetHandler daemoset.DaemonSetAPI,
 	upgradeHandler upgrade.UpgradeAPI,
 	filter *filter.Filter,
 	scheme *runtime.Scheme) *DeviceConfigReconciler {
-	helper := newDeviceConfigReconcilerHelper(client, kmmHandler, upgradeHandler,   scheme)
+	helper := newDeviceConfigReconcilerHelper(client, kmmHandler, daemonSetHandler, upgradeHandler, scheme)
 	return &DeviceConfigReconciler{
 		helper: helper,
 		filter: filter,
@@ -73,22 +74,24 @@ func (r *DeviceConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&kmmv1beta1.Module{}).
 		Owns(&appsv1.DaemonSet{}).
 		Watches(
-                        &corev1.Node{},
-                        handler.EnqueueRequestsFromMapFunc(r.filter.FindDeviceConfigForNodeChange),
-                        builder.WithPredicates(r.filter.GetNodePredicate()),
-                ).
+			&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.filter.FindDeviceConfigForNodeChange),
+			builder.WithPredicates(r.filter.GetNodePredicate()),
+		).
 		Named(DeviceConfigReconcilerName).
 		Complete(
 			reconcile.AsReconciler[*sambanovav1alpha1.DeviceConfig](mgr.GetClient(), r),
 		)
 }
 
-//+kubebuilder:rbac:groups=.sigs.x-k8s.io,resources=deviceconfigs,verbs=get;list;watch;create;patch;update
+//+kubebuilder:rbac:groups=sigs.x-k8s.io,resources=deviceconfigs,verbs=get;list;watch;create;patch;update
 //+kubebuilder:rbac:groups=kmm.sigs.x-k8s.io,resources=modules,verbs=get;list;watch;create;patch;update;delete
-//+kubebuilder:rbac:groups=.sigs.x-k8s.io,resources=deviceconfigs/finalizers,verbs=update
+//+kubebuilder:rbac:groups=sigs.x-k8s.io,resources=deviceconfigs/finalizers,verbs=update
 //+kubebuilder:rbac:groups=kmm.sigs.x-k8s.io,resources=modules/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;delete;get;list;patch;watch;create
 //+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;watch
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;patch
 
 func (r *DeviceConfigReconciler) Reconcile(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) (ctrl.Result, error) {
 	res := ctrl.Result{}
@@ -108,25 +111,29 @@ func (r *DeviceConfigReconciler) Reconcile(ctx context.Context, devConfig *samba
 	if err != nil {
 		return res, fmt.Errorf("failed to set finalizer for DeviceConfig: %v", err)
 	}
-	
+
 	logger.Info("start build configmap reconciliation")
 	err = r.helper.handleBuildConfigMap(ctx, devConfig)
 	if err != nil {
 		return res, fmt.Errorf("failed to handle build ConfigMap for DeviceConfig: %v", err)
 	}
-	
+
 	logger.Info("start KMM reconciliation")
 	err = r.helper.handleKMMModule(ctx, devConfig)
 	if err != nil {
 		return res, fmt.Errorf("failed to handle KMM module for DeviceConfig: %v", err)
 	}
+	logger.Info("start SND DaemonSet reconciliation")
+	err = r.helper.handleSNDDaemonSet(ctx, devConfig)
+	if err != nil {
+		return res, fmt.Errorf("failed to handle SND DaemonSet for DeviceConfig: %w", err)
+	}
 	logger.Info("start rolling upgrade reconciliation")
-        err = r.helper.handleModuleVersionUpgrade(ctx, devConfig)
-        if err != nil {
-                return res, fmt.Errorf("failed to handle KMM module version upgrade for DeviceConfig: %v", err)
-        }
-	
-	
+	err = r.helper.handleModuleVersionUpgrade(ctx, devConfig)
+	if err != nil {
+		return res, fmt.Errorf("failed to handle KMM module version upgrade for DeviceConfig: %v", err)
+	}
+
 	return res, nil
 }
 
@@ -135,34 +142,33 @@ type deviceConfigReconcilerHelperAPI interface {
 	finalizeDeviceConfig(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	setFinalizer(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleKMMModule(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
+	handleSNDDaemonSet(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleModuleVersionUpgrade(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleBuildConfigMap(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
-	
-	
 }
 
 type deviceConfigReconcilerHelper struct {
-	client     client.Client
-	kmmHandler kmmmodule.KMMModuleAPI
-	upgradeHandler upgrade.UpgradeAPI
-	
-	
-	scheme     *runtime.Scheme
+	client           client.Client
+	kmmHandler       kmmmodule.KMMModuleAPI
+	daemonSetHandler daemoset.DaemonSetAPI
+	upgradeHandler   upgrade.UpgradeAPI
+
+	scheme *runtime.Scheme
 }
 
 func newDeviceConfigReconcilerHelper(client client.Client,
 	kmmHandler kmmmodule.KMMModuleAPI,
+	daemonSetHandler daemoset.DaemonSetAPI,
 	upgradeHandler upgrade.UpgradeAPI,
-	
-	
-	scheme     *runtime.Scheme) deviceConfigReconcilerHelperAPI {
+
+	scheme *runtime.Scheme) deviceConfigReconcilerHelperAPI {
 	return &deviceConfigReconcilerHelper{
-		client:     client,
-		kmmHandler: kmmHandler,
-		upgradeHandler: upgradeHandler,
-		
-		
-		scheme:     scheme,
+		client:           client,
+		kmmHandler:       kmmHandler,
+		daemonSetHandler: daemonSetHandler,
+		upgradeHandler:   upgradeHandler,
+
+		scheme: scheme,
 	}
 }
 
@@ -180,10 +186,6 @@ func (dcrh *deviceConfigReconcilerHelper) finalizeDeviceConfig(ctx context.Conte
 	logger := log.FromContext(ctx)
 	var err error
 	var namespacedName types.NamespacedName
-
-	
-
-	
 
 	mod := kmmv1beta1.Module{}
 	namespacedName = types.NamespacedName{
@@ -203,7 +205,6 @@ func (dcrh *deviceConfigReconcilerHelper) finalizeDeviceConfig(ctx context.Conte
 	logger.Info("deleting KMM Module", "module", namespacedName)
 	return dcrh.client.Delete(ctx, &mod)
 }
-
 
 func (dcrh *deviceConfigReconcilerHelper) handleBuildConfigMap(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
 	buildDockerfileCM := &corev1.ConfigMap{
@@ -225,7 +226,6 @@ func (dcrh *deviceConfigReconcilerHelper) handleBuildConfigMap(ctx context.Conte
 	return err
 }
 
-
 func (dcrh *deviceConfigReconcilerHelper) handleKMMModule(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
 	kmmMod := &kmmv1beta1.Module{
 		ObjectMeta: metav1.ObjectMeta{
@@ -246,42 +246,52 @@ func (dcrh *deviceConfigReconcilerHelper) handleKMMModule(ctx context.Context, d
 
 }
 
-func (dcrh *deviceConfigReconcilerHelper) handleModuleVersionUpgrade(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
-        // check if rolling upgrade should be supported
-        if devConfig.Spec.DriverVersion == "" {
-                return nil
-        }
-        logger := log.FromContext(ctx)
-        targetedNodes, err := dcrh.upgradeHandler.GetTargetedNodes(ctx, devConfig)
-        if err != nil {
-                return fmt.Errorf("failed to get nodes targeted by the DeviceConfig %s/%s: %v", devConfig.Namespace, devConfig.Name, err)
-        }
-
-        logger.Info("targeted nodes for rolling upgrade", "num nodes", len(targetedNodes))
-
-        node := dcrh.upgradeHandler.GetUpgradedNode(ctx, devConfig, targetedNodes)
-
-        err = dcrh.upgradeHandler.UncordonUpgradedNode(ctx, node)
-        if err != nil {
-                return fmt.Errorf("failed to finzalize upgraded nodes for DeviceConfig %s/%s: %v", devConfig.Namespace, devConfig.Name, err)
-        }
-
-        node = dcrh.upgradeHandler.GetNodeForUpgrade(ctx, devConfig, targetedNodes)
-
-        err = dcrh.upgradeHandler.CordonNodeForUpgrade(ctx, devConfig, node)
-        if err != nil {
-                return fmt.Errorf("failed to cordon node %s for DeviceConfig %s/%s: %v", node.Name, devConfig.Namespace, devConfig.Name, err)
-        }
-
-        return dcrh.upgradeHandler.KickoffUpgrade(ctx, devConfig, node)
+func (dcrh *deviceConfigReconcilerHelper) handleSNDDaemonSet(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: devConfig.Namespace,
+			Name:      "snd-" + devConfig.Name,
+		},
+	}
+	opRes, err := controllerutil.CreateOrPatch(ctx, dcrh.client, ds, func() error {
+		return dcrh.daemonSetHandler.SetSNDDaemonSetAsDesired(ds, devConfig)
+	})
+	if err == nil {
+		log.FromContext(ctx).Info("Reconciled SND DaemonSet", "name", ds.Name, "result", opRes)
+	}
+	return err
 }
 
+func (dcrh *deviceConfigReconcilerHelper) handleModuleVersionUpgrade(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
+	// check if rolling upgrade should be supported
+	if devConfig.Spec.DriverVersion == "" {
+		return nil
+	}
+	logger := log.FromContext(ctx)
+	targetedNodes, err := dcrh.upgradeHandler.GetTargetedNodes(ctx, devConfig)
+	if err != nil {
+		return fmt.Errorf("failed to get nodes targeted by the DeviceConfig %s/%s: %v", devConfig.Namespace, devConfig.Name, err)
+	}
 
+	logger.Info("targeted nodes for rolling upgrade", "num nodes", len(targetedNodes))
 
+	node := dcrh.upgradeHandler.GetUpgradedNode(ctx, devConfig, targetedNodes)
 
+	err = dcrh.upgradeHandler.UncordonUpgradedNode(ctx, node)
+	if err != nil {
+		return fmt.Errorf("failed to finzalize upgraded nodes for DeviceConfig %s/%s: %v", devConfig.Namespace, devConfig.Name, err)
+	}
 
+	node = dcrh.upgradeHandler.GetNodeForUpgrade(ctx, devConfig, targetedNodes)
+
+	err = dcrh.upgradeHandler.CordonNodeForUpgrade(ctx, devConfig, node)
+	if err != nil {
+		return fmt.Errorf("failed to cordon node %s for DeviceConfig %s/%s: %v", node.Name, devConfig.Namespace, devConfig.Name, err)
+	}
+
+	return dcrh.upgradeHandler.KickoffUpgrade(ctx, devConfig, node)
+}
 
 func getDockerfileCMName(devConfig *sambanovav1alpha1.DeviceConfig) string {
 	return "dockerfile-" + devConfig.Name
 }
-

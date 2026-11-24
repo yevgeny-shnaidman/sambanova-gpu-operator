@@ -35,7 +35,7 @@ import (
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/cmd"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/config"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/controllers"
-	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemoset"
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemonset"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/filter"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/kmmmodule"
 
@@ -91,7 +91,7 @@ func main() {
 
 	client := mgr.GetClient()
 	kmmHandler := kmmmodule.NewKMMModule(client, scheme)
-	daemonSetHandler := daemoset.NewDaemonSet(scheme)
+	daemonSetHandler := daemonset.NewDaemonSet(scheme)
 	upgradeHandler := upgrade.NewUpgradeAPI(client)
 
 	filter := filter.New(client)

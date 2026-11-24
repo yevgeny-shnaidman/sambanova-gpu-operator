@@ -89,6 +89,26 @@ Client pods must run on the same node with `hostNetwork: true` and should set
 Use non-overlapping DeviceConfig node selections so only one SND instance binds
 that address on each node.
 
+## SambaNova device plugin
+
+The operator reconciles `device-plugin-<deviceconfig-name>` in the same namespace
+as the DeviceConfig. It uses the same KMM Module ready label as SND. The plugin
+uses host networking to call SND at `127.0.0.1:50053` and mounts
+`/var/lib/kubelet/device-plugins` to register with kubelet.
+
+The default image is `quay.io/yshnaidm/sm-device-plugin`. Set
+`spec.devicePluginImage` to override it and `spec.imageRepoSecret` if the image
+requires registry credentials. The image's default entrypoint must start the
+device plugin with the local SND endpoint.
+
+The default installation creates `sambanova-gpu-operator-kmm-device-plugin` in
+the operator namespace. For DeviceConfigs in other namespaces, create the same
+service account there. The namespace and service account must allow privileged
+containers, host networking, and hostPath mounts.
+
+When upgrading, the operator clears `spec.devicePlugin` from its KMM Modules.
+KMM then removes the DaemonSets it previously managed.
+
 ## Project Distribution
 
 Following the options to release and provide this solution to the users.

@@ -25,7 +25,7 @@ import (
 	kmmv1beta1 "github.com/rh-ecosystem-edge/kernel-module-management/api/v1beta1"
 	sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
 	mock_client "github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/client"
-	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemoset"
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemonset"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/kmmmodule"
 
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/upgrade"
@@ -68,6 +68,7 @@ var _ = Describe("Reconcile", func() {
 		buildConfigMapError,
 		handleKMMModuleError,
 		handleSNDDaemonSetError,
+		handleDevicePluginDaemonSetError,
 		handleModuleVersionUpgradeError bool) {
 		devConfig := &sambanovav1alpha1.DeviceConfig{}
 		if setFinalizerError {
@@ -92,6 +93,11 @@ var _ = Describe("Reconcile", func() {
 			goto executeTestFunction
 		}
 		mockHelper.EXPECT().handleSNDDaemonSet(ctx, devConfig).Return(nil)
+		if handleDevicePluginDaemonSetError {
+			mockHelper.EXPECT().handleDevicePluginDaemonSet(ctx, devConfig).Return(fmt.Errorf("some error"))
+			goto executeTestFunction
+		}
+		mockHelper.EXPECT().handleDevicePluginDaemonSet(ctx, devConfig).Return(nil)
 		if handleModuleVersionUpgradeError {
 			mockHelper.EXPECT().handleModuleVersionUpgrade(ctx, devConfig).Return(fmt.Errorf("some error"))
 			goto executeTestFunction
@@ -101,21 +107,20 @@ var _ = Describe("Reconcile", func() {
 	executeTestFunction:
 
 		res, err := dcr.Reconcile(ctx, devConfig)
-		if setFinalizerError || buildConfigMapError || handleKMMModuleError || handleSNDDaemonSetError || handleModuleVersionUpgradeError {
+		if setFinalizerError || buildConfigMapError || handleKMMModuleError || handleSNDDaemonSetError || handleDevicePluginDaemonSetError || handleModuleVersionUpgradeError {
 			Expect(err).To(HaveOccurred())
 		} else {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(res).To(Equal(ctrl.Result{}))
 		}
 	},
-		Entry("good flow, no requeue", false, false, false, false, false),
-		Entry("setFinalizer failed", true, false, false, false, false),
-
-		Entry("buildConfigMap failed", false, true, false, false, false),
-
-		Entry("handleKMMModule failed", false, false, true, false, false),
-		Entry("handleModuleVersionUpgrade failed", false, false, false, false, true),
-		Entry("handleSNDDaemonSet failed", false, false, false, true, false),
+		Entry("good flow, no requeue", false, false, false, false, false, false),
+		Entry("setFinalizer failed", true, false, false, false, false, false),
+		Entry("buildConfigMap failed", false, true, false, false, false, false),
+		Entry("handleKMMModule failed", false, false, true, false, false, false),
+		Entry("handleSNDDaemonSet failed", false, false, false, true, false, false),
+		Entry("handleDevicePluginDaemonSet failed", false, false, false, false, true, false),
+		Entry("handleModuleVersionUpgrade failed", false, false, false, false, false, true),
 	)
 
 	It("device config finalization", func() {
@@ -312,10 +317,10 @@ var _ = Describe("handleKMMModule", func() {
 	})
 })
 
-var _ = Describe("handleSNDDaemonSet", func() {
+var _ = Describe("DaemonSet reconciliation", func() {
 	var (
 		kubeClient      *mock_client.MockClient
-		daemonSetHelper *daemoset.MockDaemonSetAPI
+		daemonSetHelper *daemonset.MockDaemonSetAPI
 		dcrh            deviceConfigReconcilerHelperAPI
 		devConfig       *sambanovav1alpha1.DeviceConfig
 	)
@@ -323,87 +328,100 @@ var _ = Describe("handleSNDDaemonSet", func() {
 	BeforeEach(func() {
 		ctrl := gomock.NewController(GinkgoT())
 		kubeClient = mock_client.NewMockClient(ctrl)
-		daemonSetHelper = daemoset.NewMockDaemonSetAPI(ctrl)
+		daemonSetHelper = daemonset.NewMockDaemonSetAPI(ctrl)
 		dcrh = newDeviceConfigReconcilerHelper(kubeClient, nil, daemonSetHelper, nil, nil)
 		devConfig = &sambanovav1alpha1.DeviceConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      devConfigName,
 				Namespace: devConfigNamespace,
 			},
+			Spec: sambanovav1alpha1.DeviceConfigSpec{DevicePluginImage: "registry.example.com/device-plugin:v1"},
 		}
 	})
 
-	DescribeTable("create and patch flow", func(exists, changed, getError, configureError, writeError bool) {
-		ctx := context.Background()
-		key := types.NamespacedName{Name: "snd-" + devConfig.Name, Namespace: devConfig.Namespace}
-		ds := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
-		var calls []any
-		calls = append(calls, kubeClient.EXPECT().Get(ctx, key, gomock.Any()).DoAndReturn(
-			func(_ context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
-				if getError {
-					return fmt.Errorf("get failed")
-				}
-				if !exists {
-					return k8serrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "daemonsets"}, key.Name)
-				}
-				ds.DeepCopyInto(obj.(*appsv1.DaemonSet))
-				return nil
-			},
-		))
-		if !getError {
-			calls = append(calls, daemonSetHelper.EXPECT().SetSNDDaemonSetAsDesired(ds, devConfig).DoAndReturn(
-				func(ds *appsv1.DaemonSet, _ *sambanovav1alpha1.DeviceConfig) error {
-					if configureError {
-						return fmt.Errorf("configure failed")
+	DescribeTableSubtree("owned DaemonSets", func(namePrefix string,
+		expectConfiguration func(*daemonset.MockDaemonSetAPIMockRecorder, any, any) *gomock.Call,
+		reconcile func(deviceConfigReconcilerHelperAPI, context.Context, *sambanovav1alpha1.DeviceConfig) error,
+	) {
+		DescribeTable("create and patch flow", func(exists, changed, getError, configureError, writeError bool) {
+			ctx := context.Background()
+			key := types.NamespacedName{Name: namePrefix + devConfig.Name, Namespace: devConfig.Namespace}
+			ds := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
+			var calls []any
+			calls = append(calls, kubeClient.EXPECT().Get(ctx, key, gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+					if getError {
+						return fmt.Errorf("get failed")
 					}
-					if changed {
-						ds.Labels = map[string]string{"test": "updated"}
+					if !exists {
+						return k8serrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "daemonsets"}, key.Name)
 					}
+					ds.DeepCopyInto(obj.(*appsv1.DaemonSet))
 					return nil
 				},
 			))
-		}
-		if !getError && !configureError {
-			var writeErr error
-			if writeError {
-				writeErr = fmt.Errorf("write failed")
-			}
-			if !exists {
-				calls = append(calls, kubeClient.EXPECT().Create(ctx, ds).Return(writeErr))
-			} else if changed {
-				calls = append(calls, kubeClient.EXPECT().Patch(ctx, gomock.Any(), gomock.Any()).DoAndReturn(
-					func(_ context.Context, obj client.Object, patch client.Patch, _ ...client.PatchOption) error {
-						Expect(client.ObjectKeyFromObject(obj)).To(Equal(key))
-						data, err := patch.Data(obj)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(string(data)).To(MatchJSON(`{"metadata":{"labels":{"test":"updated"}}}`))
-						return writeErr
+			if !getError {
+				calls = append(calls, expectConfiguration(daemonSetHelper.EXPECT(), ds, devConfig).DoAndReturn(
+					func(ds *appsv1.DaemonSet, _ *sambanovav1alpha1.DeviceConfig) error {
+						if configureError {
+							return fmt.Errorf("configure failed")
+						}
+						if changed {
+							ds.Labels = map[string]string{"test": "updated"}
+						}
+						return nil
 					},
 				))
 			}
-		}
-		gomock.InOrder(calls...)
+			if !getError && !configureError {
+				var writeErr error
+				if writeError {
+					writeErr = fmt.Errorf("write failed")
+				}
+				if !exists {
+					expected := ds.DeepCopy()
+					if changed {
+						expected.Labels = map[string]string{"test": "updated"}
+					}
+					calls = append(calls, kubeClient.EXPECT().Create(ctx, expected).Return(writeErr))
+				} else if changed {
+					calls = append(calls, kubeClient.EXPECT().Patch(ctx, gomock.Any(), gomock.Any()).DoAndReturn(
+						func(_ context.Context, obj client.Object, patch client.Patch, _ ...client.PatchOption) error {
+							Expect(client.ObjectKeyFromObject(obj)).To(Equal(key))
+							data, err := patch.Data(obj)
+							Expect(err).NotTo(HaveOccurred())
+							Expect(string(data)).To(MatchJSON(`{"metadata":{"labels":{"test":"updated"}}}`))
+							return writeErr
+						},
+					))
+				}
+			}
+			gomock.InOrder(calls...)
 
-		err := dcrh.handleSNDDaemonSet(ctx, devConfig)
-		switch {
-		case getError:
-			Expect(err).To(MatchError("get failed"))
-		case configureError:
-			Expect(err).To(MatchError("configure failed"))
-		case writeError:
-			Expect(err).To(MatchError("write failed"))
-		default:
-			Expect(err).NotTo(HaveOccurred())
-		}
+			err := reconcile(dcrh, ctx, devConfig)
+			switch {
+			case getError:
+				Expect(err).To(MatchError("get failed"))
+			case configureError:
+				Expect(err).To(MatchError("configure failed"))
+			case writeError:
+				Expect(err).To(MatchError("write failed"))
+			default:
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+			Entry("creates a missing DaemonSet", false, true, false, false, false),
+			Entry("leaves an unchanged DaemonSet alone", true, false, false, false, false),
+			Entry("patches a changed DaemonSet", true, true, false, false, false),
+			Entry("returns get errors", false, false, true, false, false),
+			Entry("returns configuration errors when creating", false, false, false, true, false),
+			Entry("returns configuration errors when patching", true, true, false, true, false),
+			Entry("returns create errors", false, false, false, false, true),
+			Entry("returns patch errors", true, true, false, false, true),
+		)
 	},
-		Entry("creates a missing DaemonSet", false, false, false, false, false),
-		Entry("leaves an unchanged DaemonSet alone", true, false, false, false, false),
-		Entry("patches a changed DaemonSet", true, true, false, false, false),
-		Entry("returns get errors", false, false, true, false, false),
-		Entry("returns configuration errors when creating", false, false, false, true, false),
-		Entry("returns configuration errors when patching", true, true, false, true, false),
-		Entry("returns create errors", false, false, false, false, true),
-		Entry("returns patch errors", true, true, false, false, true),
+		Entry("SND", "snd-", (*daemonset.MockDaemonSetAPIMockRecorder).SetSNDDaemonSetAsDesired, deviceConfigReconcilerHelperAPI.handleSNDDaemonSet),
+		Entry("device plugin", "device-plugin-", (*daemonset.MockDaemonSetAPIMockRecorder).SetDevicePluginDaemonSetAsDesired, deviceConfigReconcilerHelperAPI.handleDevicePluginDaemonSet),
 	)
 })
 

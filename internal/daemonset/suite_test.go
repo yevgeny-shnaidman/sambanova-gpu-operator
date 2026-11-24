@@ -1,4 +1,4 @@
-package daemoset
+package daemonset
 
 import (
 	"testing"

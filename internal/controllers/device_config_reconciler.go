@@ -22,7 +22,7 @@ import (
 
 	kmmv1beta1 "github.com/rh-ecosystem-edge/kernel-module-management/api/v1beta1"
 	sambanovav1alpha1 "github.com/yevgeny-shnaidman/sambanova-gpu-operator/api/v1alpha1"
-	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemoset"
+	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/daemonset"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/filter"
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/kmmmodule"
 
@@ -56,7 +56,7 @@ type DeviceConfigReconciler struct {
 func NewDeviceConfigReconciler(
 	client client.Client,
 	kmmHandler kmmmodule.KMMModuleAPI,
-	daemonSetHandler daemoset.DaemonSetAPI,
+	daemonSetHandler daemonset.DaemonSetAPI,
 	upgradeHandler upgrade.UpgradeAPI,
 	filter *filter.Filter,
 	scheme *runtime.Scheme) *DeviceConfigReconciler {
@@ -128,6 +128,11 @@ func (r *DeviceConfigReconciler) Reconcile(ctx context.Context, devConfig *samba
 	if err != nil {
 		return res, fmt.Errorf("failed to handle SND DaemonSet for DeviceConfig: %w", err)
 	}
+	logger.Info("start device plugin DaemonSet reconciliation")
+	err = r.helper.handleDevicePluginDaemonSet(ctx, devConfig)
+	if err != nil {
+		return res, fmt.Errorf("failed to handle device plugin DaemonSet for DeviceConfig: %w", err)
+	}
 	logger.Info("start rolling upgrade reconciliation")
 	err = r.helper.handleModuleVersionUpgrade(ctx, devConfig)
 	if err != nil {
@@ -143,6 +148,7 @@ type deviceConfigReconcilerHelperAPI interface {
 	setFinalizer(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleKMMModule(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleSNDDaemonSet(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
+	handleDevicePluginDaemonSet(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleModuleVersionUpgrade(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 	handleBuildConfigMap(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error
 }
@@ -150,7 +156,7 @@ type deviceConfigReconcilerHelperAPI interface {
 type deviceConfigReconcilerHelper struct {
 	client           client.Client
 	kmmHandler       kmmmodule.KMMModuleAPI
-	daemonSetHandler daemoset.DaemonSetAPI
+	daemonSetHandler daemonset.DaemonSetAPI
 	upgradeHandler   upgrade.UpgradeAPI
 
 	scheme *runtime.Scheme
@@ -158,7 +164,7 @@ type deviceConfigReconcilerHelper struct {
 
 func newDeviceConfigReconcilerHelper(client client.Client,
 	kmmHandler kmmmodule.KMMModuleAPI,
-	daemonSetHandler daemoset.DaemonSetAPI,
+	daemonSetHandler daemonset.DaemonSetAPI,
 	upgradeHandler upgrade.UpgradeAPI,
 
 	scheme *runtime.Scheme) deviceConfigReconcilerHelperAPI {
@@ -258,6 +264,22 @@ func (dcrh *deviceConfigReconcilerHelper) handleSNDDaemonSet(ctx context.Context
 	})
 	if err == nil {
 		log.FromContext(ctx).Info("Reconciled SND DaemonSet", "name", ds.Name, "result", opRes)
+	}
+	return err
+}
+
+func (dcrh *deviceConfigReconcilerHelper) handleDevicePluginDaemonSet(ctx context.Context, devConfig *sambanovav1alpha1.DeviceConfig) error {
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: devConfig.Namespace,
+			Name:      "device-plugin-" + devConfig.Name,
+		},
+	}
+	opRes, err := controllerutil.CreateOrPatch(ctx, dcrh.client, ds, func() error {
+		return dcrh.daemonSetHandler.SetDevicePluginDaemonSetAsDesired(ds, devConfig)
+	})
+	if err == nil {
+		log.FromContext(ctx).Info("Reconciled device plugin DaemonSet", "name", ds.Name, "result", opRes)
 	}
 	return err
 }

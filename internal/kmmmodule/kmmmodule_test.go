@@ -27,6 +27,7 @@ import (
 	"github.com/yevgeny-shnaidman/sambanova-gpu-operator/internal/constants"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 )
 
@@ -121,64 +122,23 @@ var _ = Describe("setKMMModuleLoader", func() {
 	})
 })
 
-var _ = Describe("setKMMDevicePlugin", func() {
-	It("KMM module creation - default input values", func() {
-		mod := kmmv1beta1.Module{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "moduleName",
-				Namespace: "moduleNamespace",
-			},
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Module",
-				APIVersion: "kmm.sigs.x-k8s.io/v1beta1",
-			},
+var _ = Describe("SetKMMModuleAsDesired", func() {
+	It("clears the legacy KMM device plugin configuration", func() {
+		scheme := runtime.NewScheme()
+		Expect(sambanovav1alpha1.AddToScheme(scheme)).To(Succeed())
+		mod := &kmmv1beta1.Module{
+			ObjectMeta: metav1.ObjectMeta{Name: "gpu", Namespace: "operator"},
+			Spec: kmmv1beta1.ModuleSpec{DevicePlugin: &kmmv1beta1.DevicePluginSpec{
+				Container: kmmv1beta1.DevicePluginContainerSpec{Image: "legacy-plugin"},
+			}},
+		}
+		devConfig := &sambanovav1alpha1.DeviceConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: mod.Name, Namespace: mod.Namespace},
+			Spec:       sambanovav1alpha1.DeviceConfigSpec{DevicePluginImage: "registry.example.com/device-plugin:v1"},
 		}
 
-		input := sambanovav1alpha1.DeviceConfig{}
-
-		expectedYAMLFile, err := os.ReadFile("testdata/device_plugin_test.yaml")
-		Expect(err).To(BeNil())
-		expectedMod := kmmv1beta1.Module{}
-		expectedJSON, err := yaml.YAMLToJSON(expectedYAMLFile)
-		Expect(err).To(BeNil())
-		err = yaml.Unmarshal(expectedJSON, &expectedMod)
-		Expect(err).To(BeNil())
-
-		setKMMDevicePlugin(&mod, &input)
-
-		Expect(mod).To(Equal(expectedMod))
-	})
-
-	It("KMM module creation - user input values", func() {
-		mod := kmmv1beta1.Module{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "moduleName",
-				Namespace: "moduleNamespace",
-			},
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Module",
-				APIVersion: "kmm.sigs.x-k8s.io/v1beta1",
-			},
-		}
-
-		input := sambanovav1alpha1.DeviceConfig{
-			Spec: sambanovav1alpha1.DeviceConfigSpec{
-				DevicePluginImage: "some device plugin image",
-			},
-		}
-
-		expectedYAMLFile, err := os.ReadFile("testdata/device_plugin_test.yaml")
-		Expect(err).To(BeNil())
-		expectedMod := kmmv1beta1.Module{}
-		expectedJSON, err := yaml.YAMLToJSON(expectedYAMLFile)
-		Expect(err).To(BeNil())
-		err = yaml.Unmarshal(expectedJSON, &expectedMod)
-		Expect(err).To(BeNil())
-
-		expectedMod.Spec.DevicePlugin.Container.Image = "some device plugin image"
-
-		setKMMDevicePlugin(&mod, &input)
-
-		Expect(mod).To(Equal(expectedMod))
+		Expect(NewKMMModule(nil, scheme).SetKMMModuleAsDesired(mod, devConfig)).To(Succeed())
+		Expect(mod.Spec.DevicePlugin).To(BeNil())
+		Expect(mod.Spec.ModuleLoader).NotTo(BeNil())
 	})
 })

@@ -31,13 +31,10 @@ import (
 )
 
 const (
-	kubeletDevicePluginsVolumeName = "kubelet-device-plugins"
-	kubeletDevicePluginsPath       = "/var/lib/kubelet/device-plugins"
-	nodeVarLibFirmwarePath         = "/var/lib/firmware"
-	gpuDriverModuleName            = "testgpu"
-	imageFirmwarePath              = "testFirmwareDir/updates"
-	defaultDevicePluginImage       = "rocm/k8s-device-plugin"
-	defaultDriversImageTemplate    = "image-registry.openshift-image-registry.svc:5000/$MOD_NAMESPACE/sambanova_gpu_kmm_modules:%s-$KERNEL_VERSION"
+	nodeVarLibFirmwarePath      = "/var/lib/firmware"
+	gpuDriverModuleName         = "testgpu"
+	imageFirmwarePath           = "testFirmwareDir/updates"
+	defaultDriversImageTemplate = "image-registry.openshift-image-registry.svc:5000/$MOD_NAMESPACE/sambanova_gpu_kmm_modules:%s-$KERNEL_VERSION"
 )
 
 var (
@@ -77,7 +74,8 @@ func (km *kmmModule) SetKMMModuleAsDesired(mod *kmmv1beta1.Module, devConfig *sa
 	if err != nil {
 		return fmt.Errorf("failed to set KMM Module: %v", err)
 	}
-	setKMMDevicePlugin(mod, devConfig)
+	// Clear the old configuration so KMM removes any DaemonSet it previously created.
+	mod.Spec.DevicePlugin = nil
 	return controllerutil.SetControllerReference(devConfig, mod, km.scheme)
 }
 
@@ -125,37 +123,6 @@ func setKMMModuleLoader(mod *kmmv1beta1.Module, devConfig *sambanovav1alpha1.Dev
 		},
 	}
 	return nil
-}
-
-func setKMMDevicePlugin(mod *kmmv1beta1.Module, devConfig *sambanovav1alpha1.DeviceConfig) {
-	devicePluginImage := devConfig.Spec.DevicePluginImage
-	if devicePluginImage == "" {
-		devicePluginImage = defaultDevicePluginImage
-	}
-	hostPathDirectory := v1.HostPathDirectory
-	mod.Spec.DevicePlugin = &kmmv1beta1.DevicePluginSpec{
-		ServiceAccountName: "sambanova-gpu-operator-kmm-device-plugin",
-		Container: kmmv1beta1.DevicePluginContainerSpec{
-			Image: devicePluginImage,
-			VolumeMounts: []v1.VolumeMount{
-				{
-					Name:      "sys",
-					MountPath: "/sys",
-				},
-			},
-		},
-		Volumes: []v1.Volume{
-			{
-				Name: "sys",
-				VolumeSource: v1.VolumeSource{
-					HostPath: &v1.HostPathVolumeSource{
-						Path: "/sys",
-						Type: &hostPathDirectory,
-					},
-				},
-			},
-		},
-	}
 }
 
 func getDockerfileCMName(devConfig *sambanovav1alpha1.DeviceConfig) string {

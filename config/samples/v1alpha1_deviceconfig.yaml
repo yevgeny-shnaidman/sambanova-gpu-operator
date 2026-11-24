@@ -6,4 +6,5 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: deviceconfig-sample
 spec:
+  devicePluginImage: quay.io/yshnaidm/sm-device-plugin
   sndImage: quay.io/yshnaidm/sm-snd
